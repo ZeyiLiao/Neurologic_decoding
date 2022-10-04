@@ -149,7 +149,7 @@ def generate_summaries_or_translations(
                                  eos_id=eos_ids)
 
         batch = [f'Input: {batch[index]} ; Constraint: {lemmatized_cons[index]} ; Output: ' for index in range(len(batch))]
-        /test
+        
         if "t5" in model_name:
             # batch = ['generate a sentence with: ' + text + ' </s>' for text in batch]
             batch = [text + ' </s>' for text in batch]
