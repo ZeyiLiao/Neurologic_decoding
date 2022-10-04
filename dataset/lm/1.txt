@@ -1,0 +1,1 @@
+mattress bedroom = PersonX sneaks into PersonX's room.
