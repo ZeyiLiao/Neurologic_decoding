@@ -2,3 +2,4 @@ output_dir/
 .vscode/
 seq2seq/tmp/
 seq2seq/__pycache__/
+lm_ckpt/

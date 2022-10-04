@@ -149,12 +149,11 @@ def generate_summaries_or_translations(
                                  eos_id=eos_ids)
 
         batch = [f'Input: {batch[index]} ; Constraint: {lemmatized_cons[index]} ; Output: ' for index in range(len(batch))]
-
+        /test
         if "t5" in model_name:
             # batch = ['generate a sentence with: ' + text + ' </s>' for text in batch]
             batch = [text + ' </s>' for text in batch]
 
-        /test
         batch_ids = tokenizer(batch, return_tensors="pt", truncation=True, padding="max_length").to(device)
         input_ids, attention_mask = trim_batch(**batch_ids, pad_token_id=tokenizer.pad_token_id)
         summaries = generate(self=model,
