@@ -48,11 +48,11 @@ def filter(inputs, outputs, end_token='<extra_id_1>'):
 
         # The first token is <unk> (inidex at 0) and the second token is <extra_id_0> (indexed at 32099)
         if end_token in output:
-
+            _start_token_index = output.index('<extra_id_0>')
             _end_token_index = output.index(end_token)
-            results.append((_result_prefix + output[12:_end_token_index] + _result_suffix).replace('  ',' '))
+            results.append((_result_prefix + output[_start_token_index+12:_end_token_index] + _result_suffix).replace('  ',' '))
         else:
-            results.append((_result_prefix + output[12:] + _result_suffix).replace('  ',' '))
+            results.append((_result_prefix + output[_start_token_index+12:] + _result_suffix).replace('  ',' '))
 
     return results
 
@@ -149,7 +149,7 @@ def generate_summaries_or_translations(
                                  eos_id=eos_ids)
 
         batch = [f'Input: {batch[index]} ; Constraint: {lemmatized_cons[index]} ; Output: ' for index in range(len(batch))]
-        
+
         if "t5" in model_name:
             # batch = ['generate a sentence with: ' + text + ' </s>' for text in batch]
             batch = [text + ' </s>' for text in batch]
