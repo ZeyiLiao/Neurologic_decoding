@@ -4,8 +4,10 @@ from pathlib import Path
 import os
 import torch
 from tqdm import tqdm
-
+import random
+import csv
 from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
+from retrieve_best_ckpt import retrieve_best_ckpt
 
 from seq2seq.utils import calculate_rouge, use_task_specific_params, calculate_bleu_score, trim_batch
 
@@ -43,6 +45,7 @@ def chunks(lst, n):
 def generate_summaries_or_translations(
     args,
     examples: list,
+    orders_list: list,
     out_file: str,
     model_name: str,
     batch_size: int = 8,
@@ -52,7 +55,10 @@ def generate_summaries_or_translations(
     task="summarization",
     **gen_kwargs,
 ) -> None:
-    fout = Path(out_file).open("w", encoding="utf-8")
+    # fout = Path(out_file).open("w", encoding="utf-8")
+    fout = open(out_file,'w')
+    fout_w = csv.writer(fout)
+
     model_name = str(model_name)
     print(f'Decode with {model_name}')
     model = AutoModelForSeq2SeqLM.from_pretrained(model_name).to(device)
@@ -64,7 +70,7 @@ def generate_summaries_or_translations(
     # update config with summarization specific params
     use_task_specific_params(model, task)
 
-    for batch,lemmatized_cons in tqdm(zip(list(chunks(examples, batch_size)),list(chunks(lemmatized_constraints_list, batch_size)))):
+    for batch,orders,lemmatized_cons in tqdm(zip(list(chunks(examples, batch_size)),list(chunks(orders_list, batch_size)),list(chunks(lemmatized_constraints_list, batch_size)))):
 
 
         batch = [f'Input: {batch[index]} ; Constraint: {lemmatized_cons[index]} ; Output: ' for index in range(len(batch))]
@@ -73,6 +79,7 @@ def generate_summaries_or_translations(
         if "t5" in model_name:
             # batch = ['generate a sentence with: ' + text + ' </s>' for text in batch]
             batch = [text + ' </s>' for text in batch]
+
 
         batch_ids = tokenizer(batch, return_tensors="pt", truncation=True, padding="max_length").to(device)
 
@@ -96,10 +103,10 @@ def generate_summaries_or_translations(
         elif "bart" in model_name:
             dec = tokenizer.batch_decode(summaries, skip_special_tokens=True, clean_up_tokenization_spaces=False)
 
+        for hypothesis,order in zip(dec,orders):
+            fout_w.writerow([hypothesis.strip(),order])
+    fout.close()
 
-        for hypothesis in dec:
-            fout.write(hypothesis.strip() + "\n")
-            fout.flush()
 
 
 def run_generate():
@@ -132,21 +139,49 @@ def run_generate():
     parser.add_argument("--fp16", action="store_true")
     args = parser.parse_args()
     # examples = [" " + x.rstrip() if "t5" in args.model_name else x.rstrip() for x in open(args.input_path).readlines()]
-    examples = [x.rstrip() if "t5" in args.model_name else x.rstrip() for x in open(args.input_path).readlines()]
+    # examples = [x.rstrip() if "t5" in args.model_name else x.rstrip() for x in open(args.input_path).readlines()]
+
+    with open(args.input_path) as f:
+        reader = csv.reader(f)
+        examples = []
+        orders_list = []
+        for line in reader:
+            x, order = line[0],line[1]
+            examples.append(x.rstrip())
+            orders_list.append(order)
+
 
     if args.n_obs > 0:
         examples = examples[: args.n_obs]
 
-    def strip_to_format(x):
-        return x.rstrip().replace('[','').replace(']','').replace('\"','').replace(', not','')
+    def change_format(x):
+        neg = []
+        if len(x) == 2:
+            neg = x[1]
+        cons = x[0]
+        tmp = []
+        for _ in cons:
+            tmp.append(_)
+        random.shuffle(tmp)
 
-    lemmatized_constraints_list = [strip_to_format(x) for x in open(args.constraint_file_lemma).readlines()]
+        cons_string = '[' + ', '.join(tmp) + ']'
+        if len(neg) != 0:
+            cons_string = cons_string + f', [{neg[0]}]'
+
+        return cons_string
+
+    with open(args.constraint_file_lemma) as f:
+        lemmatized_constraints_list = []
+        for line in f:
+            lemmatized_constraints_list.append(change_format(json.loads(line)))
+
 
     generate_summaries_or_translations(
         args,
         examples,
+        orders_list,
         args.save_path,
-        args.model_name,
+        retrieve_best_ckpt(args.model_name),
         batch_size=args.bs,
         device=args.device,
         fp16=args.fp16,

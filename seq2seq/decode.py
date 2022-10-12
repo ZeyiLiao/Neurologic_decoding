@@ -1,6 +1,3 @@
-from cgi import test
-from distutils.command.config import config
-from operator import mod
 import os
 import argparse
 import json
@@ -10,9 +7,12 @@ from tkinter.messagebox import NO
 from unittest import result
 from collections import OrderedDict
 import types
-
+import random
+from nbformat import read
 import torch
 from tqdm import tqdm
+import csv
+from retrieve_best_ckpt import retrieve_best_ckpt
 
 from transformers import AutoModelForSeq2SeqLM, AutoTokenizer,T5ForConditionalGeneration,AutoConfig
 
@@ -63,6 +63,7 @@ def filter(inputs, outputs, end_token='<extra_id_1>'):
 def generate_summaries_or_translations(
     args,
     examples: list,
+    orders_list: list,
     out_file: str,
     model_name: str,
     batch_size: int = 8,
@@ -74,7 +75,9 @@ def generate_summaries_or_translations(
     **gen_kwargs,
 ) -> None:
 
-    fout = Path(out_file).open("w", encoding="utf-8")
+    # fout = Path(out_file).open("w", encoding="utf-8")
+    fout = open(out_file,'w')
+    fout_w = csv.writer(fout)
 
     print(f'Decode with {str(model_name)}')
 
@@ -125,25 +128,7 @@ def generate_summaries_or_translations(
 
 
 
-    demonstration = \
-    f"Input: PersonX sneaks into PersonY's room so PersonX feels nervous.\n"\
-    "Constraint: and, closet\n"\
-    "Output: PersonX sneaks into PersonY's room and sees a closet space, so PersonX feels nervous.\n"\
-    f"Input: PersonX sneaks into PersonY's room so PersonX feels nervous.\n"\
-    "Constraint: and, furniture, no\n"\
-    "Output: PersonX sneaks into PersonY's room and does not find furniture, so PersonX feels nervous.\n"\
-    f"Input: PersonX asks what to do so PersonX feels uncertain.\n"\
-    "Constraint: and, seek\n"\
-    "Output: PersonX asks what to do and seeks suggestions, so PersonX feels uncertain.\n"\
-    f"Input: PersonX asks what to do so PersonX feels uncertain.\n"\
-    "Constraint: and, help, no\n"\
-    "Output: PersonX asks what to do and no one help, so PersonX feels uncertain."
-
-
-
-
-
-    for batch, cons, lemmatized_cons in tqdm(zip(list(chunks(examples, batch_size)), list(chunks(constraints_list, batch_size)),list(chunks(lemmatized_constraints_list, batch_size)))):
+    for batch, orders, cons, lemmatized_cons in tqdm(zip(list(chunks(examples, batch_size)), list(chunks(orders_list, batch_size)), list(chunks(constraints_list, batch_size)),list(chunks(lemmatized_constraints_list, batch_size)))):
         constraints = init_batch(raw_constraints=cons,
                                  beam_size=args.beam_size,
                                  eos_id=eos_ids)
@@ -182,9 +167,9 @@ def generate_summaries_or_translations(
             dec = tokenizer.batch_decode(summaries, skip_special_tokens=True, clean_up_tokenization_spaces=False)
 
 
-        for hypothesis in dec:
-            fout.write(hypothesis.strip() + "\n")
-            fout.flush()
+        for hypothesis,order in zip(dec,orders):
+            fout_w.writerow([hypothesis.strip(),order])
+    fout.close()
 
 
 
@@ -229,10 +214,16 @@ def run_generate():
     parser.add_argument("--fp16", action="store_true")
     args = parser.parse_args()
 
+    with open(args.input_path) as f:
+        reader = csv.reader(f)
+        examples = []
+        orders_list = []
+        for line in reader:
+            x, order = line[0],line[1]
+            examples.append(x.rstrip() if "t5" in args.model_name else x.rstrip())
+            orders_list.append(order)
 
-    examples = [x.rstrip() if "t5" in args.model_name else x.rstrip() for x in open(args.input_path).readlines()]
-
-
+    # examples = [x.rstrip() if "t5" in args.model_name else x.rstrip() for x in open(args.input_path).readlines()]
 
     def lemma(x):
         if "bart" in args.model_name:
@@ -247,10 +238,29 @@ def run_generate():
                 constraints.append([lemma(c) for c in concept])
             constraints_list.append(constraints)
 
-    def strip_to_format(x):
-        return x.rstrip().replace('[','').replace(']','').replace('\"','').replace(', not','')
+    def change_format(x):
+        neg = []
+        if len(x) == 2:
+            neg = x[1]
+        cons = x[0]
+        tmp = []
+        for _ in cons:
+            tmp.append(_)
+        random.shuffle(tmp)
 
-    lemmatized_constraints_list = [strip_to_format(x) for x in open(args.constraint_file_lemma).readlines()]
+        cons_string = '[' + ', '.join(tmp) + ']'
+        if len(neg) != 0:
+            cons_string = cons_string + f', [{neg[0]}]'
+
+        return cons_string
+
+    with open(args.constraint_file_lemma) as f:
+        lemmatized_constraints_list = []
+        for line in f:
+            lemmatized_constraints_list.append(change_format(json.loads(line)))
+
+
+
 
     if args.n_obs > 0:
         examples = examples[: args.n_obs]
@@ -260,8 +270,9 @@ def run_generate():
     generate_summaries_or_translations(
         args,
         examples,
+        orders_list,
         args.save_path,
-        args.model_name,
+        retrieve_best_ckpt(args.model_name),
         batch_size=args.bs,
         device=args.device,
         fp16=args.fp16,
